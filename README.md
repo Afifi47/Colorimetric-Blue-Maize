@@ -9,6 +9,11 @@ This project is a Tkinter desktop application for detecting blue maize maturity 
 - Classify detected maize as `immature`, `mature`, or `rotten`.
 - Show average RGB values for each detected maize object.
 - Display an annotated detection image and a color heatmap.
+- Review dashboard cards for model status, image size, average confidence, and dominant RGB.
+- Read semicircle gauge meters for average confidence and RGB channel strength.
+- View colored maturity distribution bars for immature, mature, and rotten detections.
+- Inspect each analysis row with a class indicator and RGB color swatch.
+- Use the cyberpunk-style dashboard layout for clearer visual scanning.
 - Adjust the confidence threshold.
 - Resize the interface with draggable panels.
 - Zoom in, zoom out, fit images to the view, and scroll large images.
@@ -78,12 +83,14 @@ The application window should open. Click `Upload Image`, choose a maize image, 
 1. Click `Upload Image`.
 2. Select a `.jpg`, `.jpeg`, `.png`, `.bmp`, or `.webp` image.
 3. Review the detection result and heatmap.
-4. Adjust the confidence threshold if needed.
-5. Use `+`, `-`, the zoom slider, or `Fit to View` to adjust the image size.
-6. Use the scrollbars to inspect large images after zooming in.
-7. Drag the panel dividers to resize the detection, heatmap, and control areas.
-8. Click `Save Result` to save the annotated image.
-9. Click `Clear` to reset the screen.
+4. Check the top dashboard cards for image size, average confidence, dominant RGB, and gauge meters.
+5. Review the maturity distribution bars and analysis table.
+6. Adjust the confidence threshold if needed.
+7. Use `+`, `-`, the zoom slider, or `Fit to View` to adjust the image size.
+8. Use the scrollbars to inspect large images after zooming in.
+9. Drag the panel dividers to resize the detection, heatmap, and control areas.
+10. Click `Save Result` to save the annotated image.
+11. Click `Clear` to reset the screen.
 
 ## Check for Syntax Errors
 

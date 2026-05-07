@@ -1,5 +1,6 @@
 import threading
 import tkinter as tk
+from math import cos, radians, sin
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -45,68 +46,97 @@ class BlueMaizeApp:
         self.preview_canvases = {}
         self.preview_photos = {}
         self.display_images = {}
+        self.analysis_rows = []
+        self.current_confidence_meter = 0
+        self.current_rgb_meter = (0, 0, 0)
 
         self.confidence_var = tk.DoubleVar(value=0.50)
         self.zoom_var = tk.DoubleVar(value=1.00)
         self.zoom_label_var = tk.StringVar(value="Zoom: 100%")
         self.status_var = tk.StringVar(value="Ready. Choose an image to begin.")
         self.file_var = tk.StringVar(value="No image selected")
+        self.model_status_var = tk.StringVar(value="Model ready" if MODEL_PATH.exists() else "Model missing")
+        self.image_info_var = tk.StringVar(value="No image loaded")
+        self.avg_confidence_var = tk.StringVar(value="--")
+        self.dominant_rgb_var = tk.StringVar(value="R: --  G: --  B: --")
+        self.maturity_summary_var = tk.StringVar(value="Waiting for analysis")
         self.count_vars = {
             "total": tk.StringVar(value="0"),
             "immature": tk.StringVar(value="0"),
             "mature": tk.StringVar(value="0"),
             "rotten": tk.StringVar(value="0"),
         }
-
-        self.colors = {
-            "bg": "#07111f",
-            "panel": "#101c2e",
-            "panel_alt": "#15243a",
-            "panel_hot": "#1d3354",
-            "text": "#f4fbff",
-            "muted": "#a8bed0",
-            "accent": "#00b8d9",
-            "accent_dark": "#0288a8",
-            "green": "#22c55e",
-            "red": "#ef4444",
-            "yellow": "#f59e0b",
-            "purple": "#a855f7",
-            "border": "#2e4b66",
+        self.distribution_vars = {
+            "immature": tk.StringVar(value="0%"),
+            "mature": tk.StringVar(value="0%"),
+            "rotten": tk.StringVar(value="0%"),
         }
 
+        self.colors = {
+            "bg": "#060817",
+            "panel": "#0d1326",
+            "panel_alt": "#121a33",
+            "panel_hot": "#172044",
+            "text": "#f7fbff",
+            "muted": "#91a9c7",
+            "accent": "#00e5ff",
+            "accent_dark": "#029db4",
+            "green": "#39ff88",
+            "red": "#ff3864",
+            "yellow": "#ffd166",
+            "purple": "#b967ff",
+            "pink": "#ff4ecd",
+            "border": "#31446b",
+            "grid": "#1b2b54",
+        }
+
+        self.root.configure(bg=self.colors["bg"])
         self.build_ui()
         self.reset_image_panels()
 
     def build_ui(self):
         self.configure_styles()
 
-        header = tk.Frame(self.root, bg=self.colors["bg"])
+        header = tk.Frame(
+            self.root,
+            bg=self.colors["panel"],
+            highlightbackground=self.colors["border"],
+            highlightthickness=1,
+        )
         header.pack(fill="x", padx=22, pady=(16, 10))
         header.columnconfigure(0, weight=1)
-        header.columnconfigure(1, weight=0)
+        header.columnconfigure(1, weight=3)
+        header.columnconfigure(2, weight=1)
+
+        left_accent = tk.Frame(header, bg=self.colors["panel"])
+        left_accent.grid(row=0, column=0, rowspan=2, sticky="w", padx=18, pady=12)
+        for color in (self.colors["accent"], self.colors["purple"], self.colors["pink"]):
+            tk.Label(left_accent, bg=color, width=5, height=1).pack(anchor="w", pady=3)
 
         title = tk.Label(
             header,
-            text=APP_TITLE,
-            font=("Segoe UI", 24, "bold"),
-            bg=self.colors["bg"],
-            fg=self.colors["text"],
+            text="COLORIMETRIC BLUE MAIZE",
+            font=("OCR A Extended", 24, "bold"),
+            bg=self.colors["panel"],
+            fg=self.colors["accent"],
         )
-        title.grid(row=0, column=0, sticky="w")
+        title.grid(row=0, column=1, sticky="ew", pady=(12, 0))
 
         subtitle = tk.Label(
             header,
-            text="Detection, maturity class, RGB color analysis, heatmap, and export in one workspace",
-            font=("Segoe UI", 11),
-            bg=self.colors["bg"],
+            text="DETECTION DASHBOARD  |  RGB ANALYTICS  |  HEATMAP VISUALIZATION",
+            font=("Consolas", 10, "bold"),
+            bg=self.colors["panel"],
             fg=self.colors["muted"],
         )
-        subtitle.grid(row=1, column=0, sticky="w", pady=(4, 0))
+        subtitle.grid(row=1, column=1, sticky="ew", pady=(4, 12))
 
-        accent_row = tk.Frame(header, bg=self.colors["bg"])
-        accent_row.grid(row=0, column=1, rowspan=2, sticky="e")
-        for color in (self.colors["accent"], self.colors["green"], self.colors["yellow"], self.colors["red"]):
-            tk.Label(accent_row, bg=color, width=4, height=2).pack(side="left", padx=3)
+        accent_row = tk.Frame(header, bg=self.colors["panel"])
+        accent_row.grid(row=0, column=2, rowspan=2, sticky="e", padx=18)
+        for color in (self.colors["accent"], self.colors["green"], self.colors["yellow"], self.colors["red"], self.colors["pink"]):
+            tk.Label(accent_row, bg=color, width=2, height=2).pack(side="left", padx=3)
+
+        self.create_dashboard()
 
         main = tk.PanedWindow(
             self.root,
@@ -143,6 +173,206 @@ class BlueMaizeApp:
 
         main.add(image_pane, minsize=560, stretch="always")
         main.add(self.side_panel, minsize=310, width=350, stretch="never")
+
+    def create_dashboard(self):
+        dashboard = tk.Frame(self.root, bg=self.colors["bg"])
+        dashboard.pack(fill="x", padx=22, pady=(0, 14))
+        dashboard.rowconfigure(0, minsize=250, weight=1)
+        for column in range(4):
+            dashboard.columnconfigure(column, weight=1, uniform="dashboard")
+
+        self.model_card = self.create_metric_card(
+            dashboard,
+            "System",
+            self.model_status_var,
+            "YOLOv8 weights",
+            self.colors["accent"],
+            0,
+        )
+        self.image_card = self.create_metric_card(
+            dashboard,
+            "Image",
+            self.image_info_var,
+            "Current input",
+            self.colors["purple"],
+            1,
+        )
+        self.confidence_card = self.create_metric_card(
+            dashboard,
+            "Confidence",
+            self.avg_confidence_var,
+            "Average detection",
+            self.colors["green"],
+            2,
+        )
+        self.confidence_meter = tk.Canvas(
+            self.confidence_card,
+            height=142,
+            bg=self.colors["panel_alt"],
+            highlightthickness=0,
+        )
+        self.confidence_meter.grid(row=4, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 12))
+        self.confidence_meter.bind("<Configure>", lambda _event: self.draw_confidence_meter(self.current_confidence_meter))
+
+        color_card = self.create_metric_card(
+            dashboard,
+            "Dominant RGB",
+            self.dominant_rgb_var,
+            "Average detected color",
+            self.colors["yellow"],
+            3,
+        )
+        self.rgb_swatch = tk.Label(
+            color_card,
+            bg="#334652",
+            width=9,
+            height=4,
+            highlightbackground=self.colors["text"],
+            highlightthickness=1,
+        )
+        self.rgb_swatch.grid(row=1, column=1, rowspan=3, sticky="ne", padx=(10, 14), pady=(14, 0))
+        self.rgb_meter = tk.Canvas(
+            color_card,
+            height=142,
+            bg=self.colors["panel_alt"],
+            highlightthickness=0,
+        )
+        self.rgb_meter.grid(row=4, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 12))
+        self.rgb_meter.bind("<Configure>", lambda _event: self.draw_rgb_meter(self.current_rgb_meter))
+        self.draw_confidence_meter(0)
+        self.draw_rgb_meter((0, 0, 0))
+
+    def create_metric_card(self, parent, title, value_var, subtitle, accent, column):
+        card = tk.Frame(
+            parent,
+            bg=self.colors["panel_alt"],
+            highlightbackground=self.colors["border"],
+            highlightthickness=1,
+            height=250,
+        )
+        card.grid(row=0, column=column, sticky="nsew", padx=(0 if column == 0 else 8, 0))
+        card.grid_propagate(False)
+        card.columnconfigure(0, weight=1)
+        card.columnconfigure(1, weight=0)
+        card.rowconfigure(4, weight=1)
+
+        tk.Frame(card, bg=accent, height=5).grid(row=0, column=0, columnspan=2, sticky="ew")
+
+        title_label = tk.Label(
+            card,
+            text=title.upper(),
+            font=("Consolas", 8, "bold"),
+            bg=self.colors["panel_alt"],
+            fg=accent,
+        )
+        title_label.grid(row=1, column=0, sticky="w", padx=14, pady=(12, 0))
+
+        value_label = tk.Label(
+            card,
+            textvariable=value_var,
+            font=("Consolas", 13, "bold"),
+            bg=self.colors["panel_alt"],
+            fg=self.colors["text"],
+            anchor="w",
+            justify="left",
+            wraplength=220,
+        )
+        value_label.grid(row=2, column=0, sticky="ew", padx=14, pady=(2, 0))
+
+        subtitle_label = tk.Label(
+            card,
+            text=subtitle,
+            font=("Consolas", 9),
+            bg=self.colors["panel_alt"],
+            fg=self.colors["muted"],
+        )
+        subtitle_label.grid(row=3, column=0, sticky="w", padx=14, pady=(2, 12))
+        return card
+
+    def draw_confidence_meter(self, value):
+        if not hasattr(self, "confidence_meter"):
+            return
+
+        self.current_confidence_meter = value
+        meter = self.confidence_meter
+        meter.delete("all")
+        width = max(meter.winfo_width(), 220)
+        height = 142
+        value = max(0, min(1, value))
+        cx = width / 2
+        cy = height - 24
+        radius = min(width * 0.40, 96)
+        bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
+        arc_width = 18
+
+        meter.create_arc(bbox, start=0, extent=180, style="arc", outline=self.colors["grid"], width=arc_width)
+        meter.create_arc(
+            bbox,
+            start=180,
+            extent=-180 * value,
+            style="arc",
+            outline=self.colors["green"] if value >= 0.5 else self.colors["yellow"],
+            width=arc_width,
+        )
+
+        for marker, text in ((0, "0"), (0.5, "50"), (1, "100")):
+            angle = 180 - (180 * marker)
+            x1, y1 = point_on_circle(cx, cy, radius - 12, angle)
+            x2, y2 = point_on_circle(cx, cy, radius + 5, angle)
+            meter.create_line(x1, y1, x2, y2, fill=self.colors["border"], width=2)
+
+            if marker == 0.5:
+                xt, yt = point_on_circle(cx, cy, radius - 30, angle)
+                anchor = "center"
+            elif marker == 0:
+                xt, yt = point_on_circle(cx, cy, radius + 12, angle)
+                anchor = "e"
+            else:
+                xt, yt = point_on_circle(cx, cy, radius + 12, angle)
+                anchor = "w"
+
+            meter.create_text(xt, yt, text=text, anchor=anchor, fill=self.colors["muted"], font=("Consolas", 9, "bold"))
+
+        needle_angle = 180 - (180 * value)
+        nx, ny = point_on_circle(cx, cy, radius - 24, needle_angle)
+        meter.create_line(cx, cy, nx, ny, fill=self.colors["text"], width=4)
+        meter.create_oval(cx - 14, cy - 14, cx + 14, cy + 14, fill=self.colors["border"], outline=self.colors["text"], width=2)
+        meter.create_text(cx, cy - 30, text=f"{int(value * 100)}%", fill=self.colors["text"], font=("Consolas", 16, "bold"))
+
+    def draw_rgb_meter(self, rgb):
+        if not hasattr(self, "rgb_meter"):
+            return
+
+        self.current_rgb_meter = rgb
+        meter = self.rgb_meter
+        meter.delete("all")
+        width = max(meter.winfo_width(), 220)
+        labels = (
+            ("R", rgb[0], self.colors["red"]),
+            ("G", rgb[1], self.colors["green"]),
+            ("B", rgb[2], self.colors["accent"]),
+        )
+        gauge_width = width / 3
+        radius = min(gauge_width * 0.38, 48)
+
+        for index, (label, value, color) in enumerate(labels):
+            value = max(0, min(255, value))
+            fraction = value / 255
+            cx = (gauge_width * index) + (gauge_width / 2)
+            cy = 104
+            bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
+
+            meter.create_arc(bbox, start=0, extent=180, style="arc", outline=self.colors["grid"], width=11)
+            meter.create_arc(bbox, start=180, extent=-180 * fraction, style="arc", outline=color, width=11)
+
+            needle_angle = 180 - (180 * fraction)
+            nx, ny = point_on_circle(cx, cy, radius - 13, needle_angle)
+            meter.create_line(cx, cy, nx, ny, fill=self.colors["text"], width=2)
+            meter.create_oval(cx - 7, cy - 7, cx + 7, cy + 7, fill=self.colors["border"], outline=color, width=2)
+            meter.create_text(cx, 16, text=label, fill=color, font=("Consolas", 11, "bold"))
+            meter.create_text(cx, 42, text=f"{value:03d}", fill=self.colors["text"], font=("Consolas", 13, "bold"))
+            meter.create_text(cx - radius, cy + 12, text="0", fill=self.colors["muted"], font=("Consolas", 8, "bold"))
+            meter.create_text(cx + radius, cy + 12, text="255", fill=self.colors["muted"], font=("Consolas", 8, "bold"))
 
     def configure_styles(self):
         style = ttk.Style()
@@ -197,9 +427,9 @@ class BlueMaizeApp:
         title_label = tk.Label(
             heading,
             text=title,
-            font=("Segoe UI", 14, "bold"),
+            font=("OCR A Extended", 13, "bold"),
             bg=self.colors["panel"],
-            fg=self.colors["text"],
+            fg=self.colors["accent"],
         )
         title_label.grid(row=0, column=0, sticky="w")
 
@@ -208,7 +438,7 @@ class BlueMaizeApp:
         badge = tk.Label(
             heading,
             text=badge_text,
-            font=("Segoe UI", 9, "bold"),
+            font=("Consolas", 9, "bold"),
             bg=badge_color,
             fg="#ffffff",
             padx=10,
@@ -270,8 +500,10 @@ class BlueMaizeApp:
         parent = content
         parent.columnconfigure(0, weight=1)
 
+        self.create_section_title(parent, "Workflow", "Upload, analyze, export")
+
         controls = tk.Frame(parent, bg=self.colors["panel"])
-        controls.grid(row=0, column=0, sticky="ew", padx=18, pady=(18, 12))
+        controls.grid(row=1, column=0, sticky="ew", padx=18, pady=(8, 12))
         controls.columnconfigure(0, weight=1)
 
         self.upload_button = self.create_button(controls, "Upload Image", self.upload_image)
@@ -288,8 +520,10 @@ class BlueMaizeApp:
         self.clear_button = self.create_button(button_row, "Clear", self.clear_results)
         self.clear_button.grid(row=0, column=1, sticky="ew", padx=(6, 0))
 
+        self.create_section_title(parent, "Tuning", "Adjust sensitivity and inspection scale", row=2)
+
         threshold_frame = tk.Frame(parent, bg=self.colors["panel"])
-        threshold_frame.grid(row=1, column=0, sticky="ew", padx=18, pady=(4, 16))
+        threshold_frame.grid(row=3, column=0, sticky="ew", padx=18, pady=(4, 16))
         threshold_frame.columnconfigure(0, weight=1)
 
         self.threshold_label = tk.Label(
@@ -311,7 +545,7 @@ class BlueMaizeApp:
         threshold.grid(row=1, column=0, sticky="ew", pady=(8, 0))
 
         zoom_frame = tk.Frame(parent, bg=self.colors["panel"])
-        zoom_frame.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 16))
+        zoom_frame.grid(row=4, column=0, sticky="ew", padx=18, pady=(0, 16))
         zoom_frame.columnconfigure(1, weight=1)
 
         zoom_title = tk.Label(
@@ -350,16 +584,39 @@ class BlueMaizeApp:
             wraplength=250,
             justify="left",
         )
-        file_label.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 14))
+        file_label.grid(row=5, column=0, sticky="ew", padx=18, pady=(0, 14))
+
+        self.create_section_title(parent, "Dashboard", "Live detection summary", row=6)
 
         stats = tk.Frame(parent, bg=self.colors["panel"])
-        stats.grid(row=4, column=0, sticky="ew", padx=18, pady=(0, 16))
+        stats.grid(row=7, column=0, sticky="ew", padx=18, pady=(8, 16))
         stats.columnconfigure((0, 1), weight=1)
 
         self.create_stat(stats, "Detected", self.count_vars["total"], 0, 0, self.colors["purple"])
         self.create_stat(stats, "Immature", self.count_vars["immature"], 0, 1, self.colors["accent"])
         self.create_stat(stats, "Mature", self.count_vars["mature"], 1, 0, self.colors["green"])
         self.create_stat(stats, "Rotten", self.count_vars["rotten"], 1, 1, self.colors["red"])
+
+        self.summary_label = tk.Label(
+            parent,
+            textvariable=self.maturity_summary_var,
+            font=("Segoe UI", 10, "bold"),
+            bg=self.colors["panel_hot"],
+            fg=self.colors["text"],
+            padx=12,
+            pady=10,
+            wraplength=280,
+            justify="left",
+        )
+        self.summary_label.grid(row=8, column=0, sticky="ew", padx=18, pady=(0, 14))
+
+        distribution = tk.Frame(parent, bg=self.colors["panel"])
+        distribution.grid(row=9, column=0, sticky="ew", padx=18, pady=(0, 16))
+        distribution.columnconfigure(1, weight=1)
+        self.distribution_bars = {}
+        self.create_distribution_row(distribution, "immature", self.colors["accent"], 0)
+        self.create_distribution_row(distribution, "mature", self.colors["green"], 1)
+        self.create_distribution_row(distribution, "rotten", self.colors["red"], 2)
 
         table_title = tk.Label(
             parent,
@@ -368,23 +625,39 @@ class BlueMaizeApp:
             bg=self.colors["panel"],
             fg=self.colors["text"],
         )
-        table_title.grid(row=5, column=0, sticky="w", padx=18, pady=(0, 8))
+        table_title.grid(row=10, column=0, sticky="w", padx=18, pady=(0, 8))
 
-        columns = ("maize", "class", "conf", "rgb")
-        self.result_table = ttk.Treeview(parent, columns=columns, show="headings", height=8)
-        self.result_table.heading("maize", text="#")
-        self.result_table.heading("class", text="Class")
-        self.result_table.heading("conf", text="Conf")
-        self.result_table.heading("rgb", text="RGB")
-        self.result_table.column("maize", width=36, anchor="center", stretch=False)
-        self.result_table.column("class", width=76, anchor="center", stretch=False)
-        self.result_table.column("conf", width=54, anchor="center", stretch=False)
-        self.result_table.column("rgb", width=122, anchor="center", stretch=True)
-        self.result_table.grid(row=6, column=0, sticky="nsew", padx=18)
-        parent.rowconfigure(6, weight=1)
+        self.analysis_canvas = tk.Canvas(
+            parent,
+            bg=self.colors["panel_alt"],
+            highlightbackground=self.colors["border"],
+            highlightthickness=1,
+            height=260,
+        )
+        self.analysis_scrollbar = tk.Scrollbar(parent, orient="vertical", command=self.analysis_canvas.yview)
+        self.analysis_canvas.configure(yscrollcommand=self.analysis_scrollbar.set)
+        self.analysis_canvas.grid(row=11, column=0, sticky="nsew", padx=(18, 0))
+        self.analysis_scrollbar.grid(row=11, column=1, sticky="ns", padx=(0, 18))
+
+        self.analysis_frame = tk.Frame(self.analysis_canvas, bg=self.colors["panel_alt"])
+        self.analysis_window = self.analysis_canvas.create_window((0, 0), window=self.analysis_frame, anchor="nw")
+        self.analysis_frame.bind(
+            "<Configure>",
+            lambda _event: self.analysis_canvas.configure(scrollregion=self.analysis_canvas.bbox("all")),
+        )
+        self.analysis_canvas.bind(
+            "<Configure>",
+            lambda event: self.analysis_canvas.itemconfigure(self.analysis_window, width=event.width),
+        )
+        self.analysis_canvas.bind(
+            "<MouseWheel>",
+            lambda event: self.analysis_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units"),
+        )
+        self.create_analysis_header()
+        parent.rowconfigure(11, weight=1)
 
         self.progress = ttk.Progressbar(parent, mode="indeterminate")
-        self.progress.grid(row=7, column=0, sticky="ew", padx=18, pady=(14, 8))
+        self.progress.grid(row=12, column=0, sticky="ew", padx=18, pady=(14, 8))
 
         status = tk.Label(
             parent,
@@ -395,14 +668,169 @@ class BlueMaizeApp:
             wraplength=250,
             justify="left",
         )
-        status.grid(row=8, column=0, sticky="ew", padx=18, pady=(0, 18))
+        status.grid(row=13, column=0, sticky="ew", padx=18, pady=(0, 18))
+
+    def create_section_title(self, parent, title, subtitle, row=0):
+        section = tk.Frame(parent, bg=self.colors["panel"])
+        section.grid(row=row, column=0, sticky="ew", padx=18, pady=(18, 0))
+        section.columnconfigure(0, weight=1)
+
+        tk.Label(
+            section,
+            text=title,
+            font=("OCR A Extended", 11, "bold"),
+            bg=self.colors["panel"],
+            fg=self.colors["accent"],
+        ).grid(row=0, column=0, sticky="w")
+
+        tk.Label(
+            section,
+            text=subtitle,
+            font=("Consolas", 9),
+            bg=self.colors["panel"],
+            fg=self.colors["muted"],
+        ).grid(row=1, column=0, sticky="w", pady=(2, 0))
+
+    def create_distribution_row(self, parent, label, color, row):
+        tk.Label(
+            parent,
+            text=label.capitalize(),
+            font=("Segoe UI", 9, "bold"),
+            bg=self.colors["panel"],
+            fg=self.colors["text"],
+            width=9,
+            anchor="w",
+        ).grid(row=row, column=0, sticky="w", pady=4)
+
+        canvas = tk.Canvas(parent, height=16, bg=self.colors["panel_alt"], highlightthickness=0)
+        canvas.grid(row=row, column=1, sticky="ew", padx=8, pady=4)
+        canvas.create_rectangle(0, 0, 0, 16, fill=color, outline="")
+        self.distribution_bars[label] = canvas
+
+        tk.Label(
+            parent,
+            textvariable=self.distribution_vars[label],
+            font=("Segoe UI", 9, "bold"),
+            bg=self.colors["panel"],
+            fg=color,
+            width=5,
+            anchor="e",
+        ).grid(row=row, column=2, sticky="e", pady=4)
+
+    def create_analysis_header(self):
+        for widget in self.analysis_frame.winfo_children():
+            widget.destroy()
+
+        header = tk.Frame(self.analysis_frame, bg=self.colors["grid"])
+        header.pack(fill="x", padx=8, pady=(8, 4))
+        header.columnconfigure(0, weight=0)
+        header.columnconfigure(1, weight=1)
+        header.columnconfigure(2, weight=0)
+        header.columnconfigure(3, weight=0)
+
+        labels = [
+            ("ID", 0, 4),
+            ("MATURITY CLASS", 1, 14),
+            ("CONF", 2, 7),
+            ("RGB SIGNATURE", 3, 18),
+        ]
+        for text, column, width in labels:
+            tk.Label(
+                header,
+                text=text,
+                font=("Consolas", 9, "bold"),
+                bg=self.colors["grid"],
+                fg=self.colors["accent"],
+                width=width,
+                anchor="w" if column in (1, 3) else "center",
+                padx=8,
+                pady=6,
+            ).grid(row=0, column=column, sticky="ew")
+
+    def create_analysis_row(self, detection):
+        rgb = detection["rgb"]
+        label = detection["label"]
+        accent = rgb_to_hex(rgb)
+        class_color = {
+            "immature": self.colors["accent"],
+            "mature": self.colors["green"],
+            "rotten": self.colors["red"],
+        }.get(label, self.colors["yellow"])
+
+        row = tk.Frame(
+            self.analysis_frame,
+            bg=self.colors["panel"],
+            highlightbackground=class_color,
+            highlightthickness=1,
+        )
+        row.pack(fill="x", padx=8, pady=4)
+        row.columnconfigure(1, weight=1)
+
+        id_box = tk.Label(
+            row,
+            text=f"{detection['index']:02d}",
+            font=("Consolas", 11, "bold"),
+            bg=self.colors["panel_hot"],
+            fg=self.colors["text"],
+            width=4,
+            pady=8,
+        )
+        id_box.grid(row=0, column=0, sticky="nsw")
+
+        class_frame = tk.Frame(row, bg=self.colors["panel"])
+        class_frame.grid(row=0, column=1, sticky="ew", padx=10, pady=7)
+        class_frame.columnconfigure(1, weight=1)
+
+        tk.Label(class_frame, bg=class_color, width=2, height=1).grid(row=0, column=0, sticky="w", padx=(0, 8))
+        tk.Label(
+            class_frame,
+            text=label.upper(),
+            font=("OCR A Extended", 10, "bold"),
+            bg=self.colors["panel"],
+            fg=class_color,
+            anchor="w",
+        ).grid(row=0, column=1, sticky="ew")
+
+        tk.Label(
+            row,
+            text=f"{detection['confidence']:.2f}",
+            font=("Consolas", 11, "bold"),
+            bg=self.colors["panel"],
+            fg=self.colors["yellow"],
+            width=7,
+            pady=8,
+        ).grid(row=0, column=2, sticky="e")
+
+        rgb_frame = tk.Frame(row, bg=self.colors["panel"])
+        rgb_frame.grid(row=0, column=3, sticky="e", padx=(8, 10), pady=7)
+
+        swatch = tk.Frame(
+            rgb_frame,
+            bg=accent,
+            width=26,
+            height=22,
+            highlightbackground=self.colors["text"],
+            highlightthickness=1,
+        )
+        swatch.grid(row=0, column=0, sticky="e", padx=(0, 8))
+        swatch.grid_propagate(False)
+
+        tk.Label(
+            rgb_frame,
+            text=f"{rgb[0]:03d} {rgb[1]:03d} {rgb[2]:03d}",
+            font=("Consolas", 10, "bold"),
+            bg=self.colors["panel"],
+            fg=accent,
+            width=13,
+            anchor="e",
+        ).grid(row=0, column=1, sticky="e")
 
     def create_button(self, parent, text, command, disabled=False):
         button = tk.Button(
             parent,
             text=text,
             command=command,
-            font=("Segoe UI", 10, "bold"),
+            font=("Consolas", 10, "bold"),
             bg=self.colors["accent"],
             activebackground=self.colors["accent_dark"],
             fg="#ffffff",
@@ -432,7 +860,7 @@ class BlueMaizeApp:
         value_label = tk.Label(
             card,
             textvariable=variable,
-            font=("Segoe UI", 18, "bold"),
+            font=("OCR A Extended", 18, "bold"),
             bg=self.colors["panel_alt"],
             fg=self.colors["text"],
         )
@@ -441,7 +869,7 @@ class BlueMaizeApp:
         name_label = tk.Label(
             card,
             text=label,
-            font=("Segoe UI", 9),
+            font=("Consolas", 9),
             bg=self.colors["panel_alt"],
             fg=self.colors["muted"],
         )
@@ -526,6 +954,7 @@ class BlueMaizeApp:
         self.heatmap_image = heatmap
         self.set_preview_image("input", annotated)
         self.set_preview_image("heatmap", heatmap)
+        self.update_dashboard(detections, annotated)
         self.update_table(detections)
         self.update_counts(detections)
 
@@ -542,6 +971,39 @@ class BlueMaizeApp:
         self.set_busy(False)
         self.status_var.set("Could not analyze the selected image.")
         messagebox.showerror("Analysis error", str(exc))
+
+    def update_dashboard(self, detections, image):
+        self.model_status_var.set("Model loaded")
+        image_name = self.selected_path.name if self.selected_path else "Loaded image"
+        self.image_info_var.set(f"{image_name}\n{image.width} x {image.height} px")
+
+        if not detections:
+            self.avg_confidence_var.set("--")
+            self.dominant_rgb_var.set("R: --  G: --  B: --")
+            self.rgb_swatch.configure(bg="#334652")
+            self.draw_confidence_meter(0)
+            self.draw_rgb_meter((0, 0, 0))
+            self.maturity_summary_var.set("No maize detected above the selected threshold.")
+            return
+
+        avg_conf = sum(detection["confidence"] for detection in detections) / len(detections)
+        self.avg_confidence_var.set(f"{avg_conf:.2f}")
+        self.draw_confidence_meter(avg_conf)
+
+        avg_rgb = tuple(
+            int(sum(detection["rgb"][channel] for detection in detections) / len(detections))
+            for channel in range(3)
+        )
+        self.dominant_rgb_var.set(f"R: {avg_rgb[0]}  G: {avg_rgb[1]}  B: {avg_rgb[2]}")
+        self.rgb_swatch.configure(bg=rgb_to_hex(avg_rgb))
+        self.draw_rgb_meter(avg_rgb)
+
+        counts = count_labels(detections)
+        dominant_label = max(counts, key=counts.get)
+        self.maturity_summary_var.set(
+            f"Most detected class: {dominant_label.capitalize()} "
+            f"({counts[dominant_label]} of {len(detections)} objects)"
+        )
 
     def set_preview_image(self, panel_type, image):
         self.display_images[panel_type] = image
@@ -616,36 +1078,57 @@ class BlueMaizeApp:
         return "break"
 
     def update_table(self, detections):
-        for row in self.result_table.get_children():
-            self.result_table.delete(row)
+        self.create_analysis_header()
 
         for detection in detections:
-            rgb = detection["rgb"]
-            self.result_table.insert(
-                "",
-                "end",
-                values=(
-                    detection["index"],
-                    detection["label"],
-                    f"{detection['confidence']:.2f}",
-                    f"{rgb[0]}, {rgb[1]}, {rgb[2]}",
-                ),
+            self.create_analysis_row(detection)
+
+        if not detections:
+            empty = tk.Label(
+                self.analysis_frame,
+                text="NO DETECTION DATA",
+                font=("Consolas", 10, "bold"),
+                bg=self.colors["panel_alt"],
+                fg=self.colors["muted"],
+                pady=18,
             )
+            empty.pack(fill="x", padx=8, pady=6)
 
     def update_counts(self, detections):
-        counts = {"immature": 0, "mature": 0, "rotten": 0}
-        for detection in detections:
-            counts[detection["label"]] = counts.get(detection["label"], 0) + 1
+        counts = count_labels(detections)
 
         self.count_vars["total"].set(str(len(detections)))
         for label in ("immature", "mature", "rotten"):
             self.count_vars[label].set(str(counts[label]))
+        self.update_distribution(counts, len(detections))
+
+    def update_distribution(self, counts, total):
+        for label, canvas in self.distribution_bars.items():
+            percent = 0 if total == 0 else counts[label] / total
+            self.distribution_vars[label].set(f"{int(percent * 100)}%")
+            canvas.delete("all")
+            width = max(canvas.winfo_width(), 180)
+            canvas.create_rectangle(0, 0, width, 16, fill=self.colors["panel_alt"], outline="")
+            fill_width = int(width * percent)
+            color = {
+                "immature": self.colors["accent"],
+                "mature": self.colors["green"],
+                "rotten": self.colors["red"],
+            }[label]
+            canvas.create_rectangle(0, 0, fill_width, 16, fill=color, outline="")
 
     def clear_results(self):
         self.selected_path = None
         self.annotated_image = None
         self.heatmap_image = None
         self.file_var.set("No image selected")
+        self.image_info_var.set("No image loaded")
+        self.avg_confidence_var.set("--")
+        self.dominant_rgb_var.set("R: --  G: --  B: --")
+        self.maturity_summary_var.set("Waiting for analysis")
+        self.rgb_swatch.configure(bg="#334652")
+        self.draw_confidence_meter(0)
+        self.draw_rgb_meter((0, 0, 0))
         self.status_var.set("Ready. Choose an image to begin.")
         self.save_button.configure(state="disabled", bg="#334652")
         self.update_table([])
@@ -718,6 +1201,24 @@ def build_detections(boxes, classes, confs, avg_colors):
             }
         )
     return detections
+
+
+def count_labels(detections):
+    counts = {"immature": 0, "mature": 0, "rotten": 0}
+    for detection in detections:
+        label = detection["label"]
+        if label in counts:
+            counts[label] += 1
+    return counts
+
+
+def rgb_to_hex(rgb):
+    return "#{:02x}{:02x}{:02x}".format(*rgb)
+
+
+def point_on_circle(cx, cy, radius, angle_degrees):
+    angle = radians(angle_degrees)
+    return cx + radius * cos(angle), cy - radius * sin(angle)
 
 
 def draw_boxes_with_info(image, detections):
